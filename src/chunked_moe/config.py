@@ -28,6 +28,9 @@ class ChunkedMoEConfig:
     accum_dtype: Dtype of the weight-gradient accumulators in the backward loop.
     num_sms: SM count used to size Mosaic GPU grids. Passed explicitly because
       deviceless compilation has no device to query.
+    stripe_width: Columns per gate/up stripe in the striped w_up layout. The
+      fused kernel's output tile is this wide, so gate and up for the same
+      output columns land in the same thread block.
   """
 
   num_experts: int
@@ -38,6 +41,7 @@ class ChunkedMoEConfig:
   comm_dtype: str | None = None
   accum_dtype: str = "float32"
   num_sms: int = 132
+  stripe_width: int = 128
 
   def __post_init__(self):
     if self.slice_size <= 0:

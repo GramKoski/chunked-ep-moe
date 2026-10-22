@@ -42,12 +42,15 @@ def _exchange_fn(cfg: ChunkedMoEConfig):
 
 def _expert_fns(cfg: ChunkedMoEConfig):
   if cfg.expert_compute == "reference":
-    return expert.expert_forward, expert.expert_backward
+    module = expert
+  elif cfg.expert_compute == "fused":
+    from chunked_moe.kernels import fused_expert as module  # pylint: disable=import-outside-toplevel
+  else:
+    raise ValueError(f"Unknown expert_compute {cfg.expert_compute!r}")
+  kw = dict(stripe=cfg.stripe_width)
   if cfg.expert_compute == "fused":
-    from chunked_moe.kernels import fused_expert  # pylint: disable=import-outside-toplevel
-
-    return fused_expert.expert_forward, fused_expert.expert_backward
-  raise ValueError(f"Unknown expert_compute {cfg.expert_compute!r}")
+    kw["num_sms"] = cfg.num_sms
+  return functools.partial(module.expert_forward, **kw), functools.partial(module.expert_backward, **kw)
 
 
 def _quantize_rows(x, comm_dtype):

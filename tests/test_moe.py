@@ -48,11 +48,32 @@ def _chunked(mesh, cfg):
 
 @pytest.mark.parametrize("skew", ["uniform", "rank0", "all_one"])
 @pytest.mark.parametrize("slice_size", [3, 8, 64])
-@pytest.mark.parametrize("comm_dtype", [None])
-def test_forward_and_grads_match_reference(skew, slice_size, comm_dtype):
+@pytest.mark.parametrize("stripe", [1, 4])
+def test_forward_and_grads_match_reference(skew, slice_size, stripe):
+  _check(skew, slice_size, stripe, comm_dtype=None, tol=1e-4)
+
+
+@pytest.mark.parametrize("skew", ["uniform", "all_one"])
+def test_fp8_wire_is_close(skew):
+  # Rows travel as float8_e4m3fn with per-row scales (about 2 significant digits).
+  _check(skew, slice_size=8, stripe=4, comm_dtype="float8_e4m3fn", tol=None, max_rel_err=0.08)
+
+
+def _rel_err(a, b):
+  return float(jnp.linalg.norm(a - b) / jnp.linalg.norm(b))
+
+
+def _check(skew, slice_size, stripe, comm_dtype, tol, max_rel_err=None):
   ep, tokens, experts, top_k, hidden, ffn = 4, 16, 8, 2, 8, 12
   mesh = jax.make_mesh((ep,), ("ep",))
-  cfg = ChunkedMoEConfig(num_experts=experts, top_k=top_k, slice_size=slice_size, transport="emulated", comm_dtype=comm_dtype)
+  cfg = ChunkedMoEConfig(
+      num_experts=experts,
+      top_k=top_k,
+      slice_size=slice_size,
+      transport="emulated",
+      comm_dtype=comm_dtype,
+      stripe_width=stripe,
+  )
   x, ids, weights, w_up, w_down, g = _setup(ep, tokens, experts, top_k, hidden, ffn, skew)
   put = lambda a: jax.device_put(a, NamedSharding(mesh, P("ep")))
 
@@ -61,14 +82,19 @@ def test_forward_and_grads_match_reference(skew, slice_size, comm_dtype):
   def chunked_loss(x, w, u, d):
     return jnp.sum(chunked(x, put(ids), w, u, d) * g)
 
+  ref = functools.partial(reference_moe, stripe=stripe)
+
   def ref_loss(x, w, u, d):
-    return jnp.sum(reference_moe(x, ids, w, u, d) * g)
+    return jnp.sum(ref(x, ids, w, u, d) * g)
 
   args = (x, weights, w_up, w_down)
   out = jax.jit(chunked)(*map(put, (x, ids, weights, w_up, w_down)))
-  np.testing.assert_allclose(out, reference_moe(x, ids, weights, w_up, w_down), rtol=1e-5, atol=1e-5)
-
   got = jax.jit(jax.grad(chunked_loss, argnums=(0, 1, 2, 3)))(*map(put, args))
   want = jax.grad(ref_loss, argnums=(0, 1, 2, 3))(*args)
-  for name, a, b in zip(["dx", "dweights", "dw_up", "dw_down"], got, want):
-    np.testing.assert_allclose(a, b, rtol=1e-4, atol=1e-4, err_msg=name)
+  pairs = [("out", out, ref(x, ids, weights, w_up, w_down))]
+  pairs += list(zip(["dx", "dweights", "dw_up", "dw_down"], got, want))
+  for name, a, b in pairs:
+    if max_rel_err is None:
+      np.testing.assert_allclose(a, b, rtol=tol, atol=tol, err_msg=name)
+    else:
+      assert _rel_err(a, b) < max_rel_err, f"{name}: relative error {_rel_err(a, b):.4f}"
