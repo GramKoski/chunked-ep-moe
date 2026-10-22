@@ -92,6 +92,21 @@ def enable_nvshmem_lowering(sm: int = 90) -> dict:
   return {}
 
 
+def _peer(axis_name, index):
+  """Mesh device id of position `index` along the EP axis, keeping our own coordinates on every other axis.
+
+  The EP axis may be several mesh axes (e.g. ("context", "expert")); their
+  flat index is row-major, like lax.axis_index on a tuple of axes.
+  """
+  axes = tuple(axis_name) if isinstance(axis_name, (tuple, list)) else (axis_name,)
+  coords = {}
+  for axis in reversed(axes):
+    size = lax.axis_size(axis)
+    coords[axis] = lax.rem(index, size)
+    index = lax.div(index, size)
+  return coords
+
+
 @functools.partial(jax.named_call, name="nvshmem_slice_exchange")
 def nvshmem_exchange(operand: jax.Array, output: jax.Array, args: SliceArgs, axis_name, *, num_sms: int = 132) -> jax.Array:
   if operand.ndim != 2 or output.ndim != 2 or operand.shape[1] != output.shape[1]:
@@ -124,7 +139,7 @@ def nvshmem_exchange(operand: jax.Array, output: jax.Array, args: SliceArgs, axi
     def _barrier():
       @pl.loop(0, num_ranks)
       def _announce(peer):
-        pl.semaphore_signal(ready, device_id=peer)
+        pl.semaphore_signal(ready, device_id=_peer(axis_name, peer))
 
       pl.semaphore_wait(ready, value=num_ranks, decrement=True)
 
@@ -141,7 +156,7 @@ def nvshmem_exchange(operand: jax.Array, output: jax.Array, args: SliceArgs, axi
       dst = seg // per_peer
       src_row0 = in_off_ref[seg]
       dst_row0 = out_off_ref[seg]
-      peer_y = plgpu.remote_ref(y_ref, dst)
+      peer_y = plgpu.remote_ref(y_ref, _peer(axis_name, dst))
 
       @pl.loop(block, size_ref[seg], step=num_blocks)
       def _row(r):
@@ -154,7 +169,7 @@ def nvshmem_exchange(operand: jax.Array, output: jax.Array, args: SliceArgs, axi
     # receiver before it sees the count go up.
     @pl.loop(0, num_ranks)
     def _signal(dst):
-      pl.semaphore_signal(done, device_id=dst)
+      pl.semaphore_signal(done, device_id=_peer(axis_name, dst))
 
     # The kernel finishes only when block 0 has seen every block of every sender.
     @pl.when(block == 0)
