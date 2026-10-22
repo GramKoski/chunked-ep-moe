@@ -6,6 +6,8 @@ JAX"), with two transports (`ragged_all_to_all` and one-sided NVSHMEM-style
 puts from a Mosaic GPU kernel), fused Hopper kernels, and a MaxText
 integration (`moe_ep_impl=chunked`).
 
+See [DESIGN.md](DESIGN.md) for how it works in detail, limitations and future work.
+
 ## The idea
 
 Dropless MoE under XLA's static shapes usually means sizing receive buffers for
