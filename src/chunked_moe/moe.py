@@ -107,7 +107,7 @@ def _forward(x, expert_ids, weights, w_up, w_down, cfg: ChunkedMoEConfig, axis_n
   def body(carry):
     j, cur, ret = carry
     nxt = dispatch(j + 1)  # independent of this slice's compute, so it can overlap it
-    y, _ = fwd(cur, w_up, w_down, plan_lib.slice_group_sizes(plan, j, s, axis_name))
+    y, _ = fwd(cur, w_up, w_down, plan_lib.slice_group_sizes(plan, j, s, axis_name), need_residuals=False)
     ret = exchange(y, ret, plan_lib.combine_args(plan, j, s, axis_name), axis_name)
     return j + 1, nxt, ret
 

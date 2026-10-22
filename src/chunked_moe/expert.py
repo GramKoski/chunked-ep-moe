@@ -83,8 +83,9 @@ class ForwardResiduals(NamedTuple):
   act: jax.Array  # [S, F]
 
 
-def expert_forward(x, w_up, w_down, group_sizes, *, stripe: int):
-  """x: [S, D] expert-major slice -> y: [S, D]."""
+def expert_forward(x, w_up, w_down, group_sizes, *, stripe: int, need_residuals: bool = True):
+  """x: [S, D] expert-major slice -> y: [S, D]. need_residuals is a hint for fused kernels."""
+  del need_residuals
   h = _gmm(x, w_up, group_sizes, x.dtype)
   act = striped_swiglu(h, stripe)
   y = _gmm(act, w_down, group_sizes, x.dtype)
