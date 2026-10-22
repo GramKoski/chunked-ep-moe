@@ -91,6 +91,12 @@ There was no GPU available, so verification is split three ways.
 - Every fused Mosaic GPU kernel, run in JAX's Mosaic GPU interpreter
   (`tests/test_fused_kernels.py`), including partial slices and empty experts.
   Two interpreter gaps are filled by test-only shims (`tests/interpret_shims.py`).
+  The interpreter hangs once kernels run inside the layer's `while_loop`, so the
+  layer *with* fused kernels is only compiled, not run; its two halves (layer
+  with reference math, kernels standalone) are each tested.
+- The slice plan's invariants directly (`tests/test_plan.py`): every row is
+  delivered and returned exactly once, no padding is ever on the wire, no slice
+  exceeds S rows, and all ranks run the same number of iterations.
 - MaxText end to end: a 5-layer DeepSeek-V3-tiny trains for 4 steps with the
   same losses as MaxText's default MoE (to bf16 rounding), at EP=1 and EP=4.
 
@@ -98,7 +104,13 @@ There was no GPU available, so verification is split three ways.
 - The layer, forward + backward, at DeepSeek-V3 MoE sizes on 8 x H100, for
   `ragged_a2a` + reference, `ragged_a2a` + fused, and the put/signal transport
   + fused (11 Mosaic GPU kernels in the optimized HLO).
-- DeepSeek-V3 through MaxText's `train_compile` (see the maxtext branch).
+- DeepSeek-V3 671B through MaxText's `train_compile` on 128 x H100 (16 nodes,
+  EP=8 x FSDP=16, bf16 weights and moments, seq 4096):
+
+  | transport + expert compute | args / GPU | temp / GPU | total |
+  |---|---|---|---|
+  | ragged_a2a + reference | 31.5 GB | 48.1 GB | 79.6 GB |
+  | put/signal + fused     | 31.5 GB | 41.9 GB | 73.4 GB |
 
 **Not verified** (needs real GPUs):
 - Run-time behaviour of the put/signal kernel: the ready/done semaphore
